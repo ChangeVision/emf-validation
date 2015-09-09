@@ -18,11 +18,13 @@ import java.util.Set;
 import org.eclipse.emf.common.util.EList;
 import org.eclipse.emf.common.util.ResourceLocator;
 import org.eclipse.emf.common.util.URI;
+import org.eclipse.emf.ecore.EClassifier;
 import org.eclipse.emf.ecore.EObject;
 import org.eclipse.emf.ecore.resource.Resource;
 import org.eclipse.emf.ecore.resource.ResourceSet;
 import org.eclipse.emf.ecore.resource.impl.ResourceSetImpl;
 import org.eclipse.emf.ecore.util.EcoreUtil;
+import org.eclipse.emf.validation.EMFEventType;
 import org.eclipse.emf.validation.internal.EMFModelValidationDebugOptions;
 import org.eclipse.emf.validation.internal.EMFModelValidationPlugin;
 import org.eclipse.emf.validation.internal.EMFModelValidationStatusCodes;
@@ -37,8 +39,11 @@ import org.eclipse.emf.validation.internal.modeled.model.validation.ConstraintBi
 import org.eclipse.emf.validation.internal.modeled.model.validation.ConstraintProvider;
 import org.eclipse.emf.validation.internal.modeled.model.validation.Constraints;
 import org.eclipse.emf.validation.internal.modeled.model.validation.ConstraintsBundle;
+import org.eclipse.emf.validation.internal.modeled.model.validation.Event;
+import org.eclipse.emf.validation.internal.modeled.model.validation.EventTypesEnum;
 import org.eclipse.emf.validation.internal.modeled.model.validation.Parser;
 import org.eclipse.emf.validation.internal.modeled.model.validation.Selector;
+import org.eclipse.emf.validation.internal.modeled.model.validation.Target;
 import org.eclipse.emf.validation.internal.service.ClientContextManager;
 import org.eclipse.emf.validation.internal.service.GetBatchConstraintsOperation;
 import org.eclipse.emf.validation.internal.service.GetLiveConstraintsOperation;
@@ -353,7 +358,7 @@ public class ModeledConstraintsLoader {
 		}
 
 		public boolean isCacheEnabled() {
-			return false;
+			return provider.getModel().isCache();
 		}
 
 		public boolean isXmlProvider() {
@@ -379,8 +384,27 @@ public class ModeledConstraintsLoader {
 			}
 			
 			GetBatchConstraintsOperation op = (GetBatchConstraintsOperation) operation;
-			
-			return provider.getModel().getPackage().contains(op.getEObject().eClass().getEPackage());
+
+			boolean result = false;
+
+			final EList<Target> targets = provider.getModel().getTarget();
+			if (targets.isEmpty()) {
+				// as a special case, the absence of any "target" elements
+				// indicates that I apply to all elements, features, and events
+				// in my namespace
+				result = providerHandlesNamespace(op.getEObject());
+			} else {
+				final EObject eObject = op.getEObject();
+
+				for (Target next : targets) {
+					if (providerHandlesEObject(eObject, next)) {
+						result = true;
+						break;
+					}
+				}
+			}
+
+			return result;
 		}
 
 		private boolean providesLiveConstraints(
@@ -389,9 +413,88 @@ public class ModeledConstraintsLoader {
 				return false;
 			}
 			
-			return false;
+			GetLiveConstraintsOperation op = (GetLiveConstraintsOperation) operation;
+
+			boolean result = false;
+
+			final EList<Target> targets = provider.getModel().getTarget();
+			if (targets.isEmpty()) {
+				// as a special case, the absence of any "target" elements
+				// indicates that I apply to all elements, features, and events
+				// in my namespace
+				result = providerHandlesNamespace(op.getEObject());
+			} else {
+				final EObject eObject = op.getEObject();
+
+				for (Target next : targets) {
+					if (providerHandlesEObject(eObject, next)
+							&& providerHandlesEvent(op.getEventType(), next)) {
+						result = true;
+						break;
+					}
+				}
+			}
+
+			return result;
 		}
 		
+		/**
+		 * Helper method to determine whether my provider handles the namespace
+		 * in which an EMF object's type is defined.
+		 * 
+		 * @param eObject an EMF object
+		 * @return whether this EMF object's metamodel is recognized by my
+		 *     provider
+		 */
+		private boolean providerHandlesNamespace(EObject eObject) {
+			// TODO look for EPackages that this package extends like as plugin.xml 
+			return provider.getModel().getPackage().contains(eObject.eClass().getEPackage());
+		}
+
+		/**
+		 * Determines whether my provider can provide any constraints for an
+		 * EMF object according to its type.
+		 * 
+		 * @param eObject an EMF object
+		 * @param target the data from a Target model in the provider
+		 *    indicates one of the EMF types for which the provider can
+		 *    supply constraints
+		 * @return whether this EMF object's type may be recognized by the
+		 *    provider
+		 */
+		private boolean providerHandlesEObject(EObject eObject, Target target) {
+			if (providerHandlesNamespace(eObject)) {
+				EClassifier eClass = target.getEClass();
+				if ((eClass != null) && !eClass.isInstance(eObject)) {
+					return false;
+				}
+				return true;
+			}
+			return false;
+		}
+
+		/**
+	     * Helper method to determine whether my provider handles the specified
+	     * event type.
+	     * 
+	     * @param eventType
+	     *            an EMF event type
+	     * @param target
+	     *            the data from an Target model in the provider indicates
+	     *            one of the EMF events for which the provider can supply
+	     *            constraints
+	     * @return whether this EMF event type is recognized by my provider
+	     */
+		private boolean providerHandlesEvent(EMFEventType eventType, Target target) {
+			if (target instanceof Event) {
+				EventTypesEnum name = ((Event) target).getName();
+				if (!eventType.getName().equals(name.name())) {
+					return false;
+				}
+			}
+			return true;
+		}
+
 	}
 	
 	
