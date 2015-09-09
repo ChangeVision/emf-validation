@@ -255,7 +255,11 @@ public class ModelValidationService {
 
 	void registerProvider(IProviderDescriptor descriptor) {
 		synchronized (providersLock) {
-			constraintProviders.add(descriptor);
+			if (descriptor.isCacheEnabled()) {
+				constraintCache.addProvider(descriptor);
+			} else {
+				constraintProviders.add(descriptor);
+			}
 		}
 	}
 
